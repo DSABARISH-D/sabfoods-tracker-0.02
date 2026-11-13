@@ -1,0 +1,2 @@
+import {endpoint,validHmac,confirm} from '../_shared/payment.ts';
+endpoint(async req=>{const raw=await req.text();if(!await validHmac(raw,req.headers.get('x-razorpay-signature')||'',Deno.env.get('RAZORPAY_WEBHOOK_SECRET')!))throw new Error('Invalid webhook signature');const event=JSON.parse(raw);if(event.event==='payment.captured')await confirm(event.payload.payment.entity);return {received:true};});

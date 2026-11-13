@@ -1,0 +1,2 @@
+export function cartTotal(cart, products){return cart.reduce((sum,item)=>{const p=products.find(p=>p.id===item.id);return sum+Math.round(Number(p?.price||0)*100)*item.quantity;},0)/100;}
+export function changeQuantity(cart, id, delta, stock){const previous=cart.find(i=>i.id===id)?.quantity||0;const quantity=Math.max(0,Math.min(stock,previous+delta));return [...cart.filter(i=>i.id!==id),...(quantity?[{id,quantity}]:[])];}

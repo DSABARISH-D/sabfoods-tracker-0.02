@@ -1,0 +1,47 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {PGlite} from '@electric-sql/pglite';
+const a='10000000-0000-4000-8000-000000000001',b='10000000-0000-4000-8000-000000000002',staff='10000000-0000-4000-8000-000000000003';
+const req='20000000-0000-4000-8000-000000000001';
+test('database: transactions, ownership, role restrictions and payment idempotency',async()=>{
+ const db=new PGlite();
+ try{
+ await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;create table auth.users(id uuid primary key,raw_user_meta_data jsonb);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;grant usage on schema auth to anon,authenticated,service_role;grant execute on function auth.uid() to anon,authenticated,service_role;`);
+ await db.exec(await readFile(new URL('../supabase/migrations/202611130001_initial.sql',import.meta.url),'utf8'));
+ await db.exec(`insert into auth.users values('${a}','{}'),('${b}','{}'),('${staff}','{}');update profiles set role='cashier' where id='${staff}';update products set stock_quantity=3;`);
+ const product=(await db.query('select id,price from products order by name limit 1')).rows[0];
+ const asUser=async(id)=>{await db.exec(`reset role;set role authenticated;set request.jwt.claim.sub='${id}';`);};
+ const place=async(id=req,quantity=1,method='online')=>db.query('select place_order($1::jsonb,$2,$3,$4,$5,$6,$7::uuid) as id',[JSON.stringify([{id:product.id,quantity}]),'Test customer','9876543210','takeaway',method,'',id]);
+ await asUser(a);
+ await assert.rejects(()=>place(req,1,'cash'),/not allowed/);
+ await assert.rejects(()=>db.exec("update profiles set role='admin'"),/permission denied/);
+ await assert.rejects(()=>db.exec(`select set_user_role('${b}','admin')`),/Admin only/);
+ assert.equal((await db.query('update products set price=1 returning id')).rows.length,0,'customer cannot edit prices');
+ const id=(await place()).rows[0].id;
+ assert.equal((await place()).rows[0].id,id,'request retries reuse the order');
+ assert.equal((await db.query('select stock_quantity from products where id=$1',[product.id])).rows[0].stock_quantity,2);
+ await assert.rejects(()=>place('20000000-0000-4000-8000-000000000002',10),/insufficient stock/);
+ assert.equal((await db.query('select count(*)::int as n from orders')).rows[0].n,1,'failed order rolls back');
+ await asUser(b);
+ assert.equal((await db.query('select * from orders')).rows.length,0,'other customer cannot read order');
+ assert.equal((await db.query('select * from order_items')).rows.length,0);
+ await assert.rejects(()=>place(),/Invalid request/);
+ await assert.rejects(()=>db.query("select confirm_payment('order_test','pay_test',1)"),/permission denied/);
+ await asUser(staff);
+ await assert.rejects(()=>db.query('select advance_order($1)',[id]),/cannot advance/);
+ await db.exec('reset role;set role service_role;');
+ await db.query("select attach_payment_order($1,'order_test')",[id]);
+ await assert.rejects(()=>db.query("select confirm_payment('order_test','pay_test',1)"),/amount mismatch/);
+ await db.query("select confirm_payment('order_test','pay_test',$1)",[Math.round(Number(product.price)*100)]);
+ await db.query("select confirm_payment('order_test','pay_test',$1)",[Math.round(Number(product.price)*100)]);
+ assert.equal((await db.query('select payment_status from orders where id=$1',[id])).rows[0].payment_status,'paid');
+ await asUser(staff);
+ await db.query('select advance_order($1)',[id]);
+ assert.equal((await db.query('select order_status from orders where id=$1',[id])).rows[0].order_status,'preparing');
+ await assert.rejects(()=>db.query('select cancel_unpaid_order($1)',[id]),/Payment may be in progress/);
+ const unpaid=(await place('20000000-0000-4000-8000-000000000003')).rows[0].id;
+ await db.query('select cancel_unpaid_order($1)',[unpaid]);await db.query('select cancel_unpaid_order($1)',[unpaid]);
+ assert.equal((await db.query('select stock_quantity from products where id=$1',[product.id])).rows[0].stock_quantity,2,'stock restored exactly once');
+ }finally{await db.close();}
+});

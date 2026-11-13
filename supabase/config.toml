@@ -1,0 +1,9 @@
+project_id = "sabfoods-tracker"
+# Each user endpoint verifies the bearer token using auth.getUser.
+[functions.create-payment]
+verify_jwt = false
+[functions.verify-payment]
+verify_jwt = false
+# Razorpay authenticates using HMAC over the raw request body.
+[functions.razorpay-webhook]
+verify_jwt = false
