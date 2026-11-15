@@ -5,13 +5,13 @@ This feature is **not** an automated payment gateway. It does not require a YouP
 ## Setup
 1. Rotate any database password disclosed outside your secret manager. Never commit database passwords or service-role keys.
 2. Back up the Supabase database. Apply the existing initial migration first if not already applied, then review and apply `supabase/migrations/202611150001_manual_upi.sql` exactly once through your controlled migration process.
-3. Upload the restaurant's existing QR image to an HTTPS location you control (for example a public Supabase Storage object). Ensure the QR is your own, and test that its payee details match your bank account. Do not upload credentials.
-4. Sign in as admin and set **UPI QR image HTTPS URL** in Settings. Leave it blank until the image is available; customers cannot submit a new claim from the UI without a configured QR.
+3. Upload the restaurant's existing QR image as `restaurant-qr.png` into the **private** Supabase Storage bucket `staff-upi` (created by migration). Only authenticated admin/cashier roles can read it via a short-lived signed URL. Never use a public bucket or commit the QR image. Verify the payee before using it.
+4. The QR is not available in customer screens. Staff can click **View staff-only QR** on a pending UPI order. The signed link expires after 60 seconds; do not distribute it publicly. Customers must pay in person with staff assistance, then enter the UTR.
 5. Test with synthetic orders and bank-confirmed test transactions before accepting real orders.
 
 ## Payment states
 - Customer selects **UPI QR · manual bank verification** and places an order. The database reserves stock and leaves order payment pending.
-- In Orders, the customer views the configured QR and submits a 12–22 digit numeric UTR. This is a **claim**, not proof of payment.
+- Staff privately shows the QR in person; in Orders, the customer submits a 12–22 digit numeric UTR. This is a **claim**, not proof of payment.
 - Admin sees the claim in Orders. **Only after independently confirming bank credit, payee, amount and reference**, admin enters an evidence note and approves. This atomically marks payment paid and order confirmed.
 - Admin may reject with a reason. Rejected orders are not confirmed; handle stock restoration/reconciliation with a documented staff procedure. The rejection flow deliberately does not automatically release reserved stock.
 - A claimed order cannot be cancelled by the existing cancellation RPC until manually reconciled.
