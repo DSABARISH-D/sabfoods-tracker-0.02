@@ -2,7 +2,17 @@
 begin;
 alter table public.orders drop constraint if exists orders_payment_method_check;
 alter table public.orders add constraint orders_payment_method_check check(payment_method in ('online','cash','manual_upi'));
-alter table public.restaurant_settings add column if not exists upi_qr_url text not null default '' check(upi_qr_url='' or upi_qr_url like 'https://%');
+-- Private bucket: QR must never be exposed via public settings or public URLs.
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values('staff-upi','staff-upi',false,1048576,array['image/png'])
+on conflict(id) do update set public=false;
+create policy "staff read restaurant QR" on storage.objects for select to authenticated
+using(bucket_id='staff-upi' and name='restaurant-qr.png' and public.my_role() in ('admin','cashier'));
+create policy "admin upload restaurant QR" on storage.objects for insert to authenticated
+with check(bucket_id='staff-upi' and name='restaurant-qr.png' and public.my_role()='admin');
+create policy "admin update restaurant QR" on storage.objects for update to authenticated
+using(bucket_id='staff-upi' and name='restaurant-qr.png' and public.my_role()='admin')
+with check(bucket_id='staff-upi' and name='restaurant-qr.png' and public.my_role()='admin');
 alter table public.payments add column if not exists upi_utr text;
 alter table public.payments add column if not exists upi_claimed_at timestamptz;
 alter table public.payments add column if not exists upi_reviewed_by uuid references public.profiles(id);
